@@ -5,6 +5,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from users.models import ApplicantStatus
+from users.serializers import UserSerializer
 
 
 class ActiveUserTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -47,12 +48,15 @@ class ActiveUserTokenObtainPairSerializer(TokenObtainPairSerializer):
             pending_message = self._pending_message(self.user)
             if pending_message:
                 raise PermissionDenied(pending_message)
+            if not self.user.is_verified:
+                raise PermissionDenied("Please verify your email before logging in.")
             raise PermissionDenied("Account is inactive. Please wait for approval.")
 
         refresh = self.get_token(self.user)
         return {
             "refresh": str(refresh),
             "access": str(refresh.access_token),
+            "user": UserSerializer(self.user).data,
         }
 
 

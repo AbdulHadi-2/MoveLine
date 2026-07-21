@@ -55,17 +55,26 @@ class Order(models.Model):
     )
     assembly = models.BooleanField(default=False)
     disassembly = models.BooleanField(default=False)
-    service_type = models.CharField(max_length=20, choices=ServiceType.choices)
+    service_type = models.CharField(
+        max_length=20,
+        choices=ServiceType.choices,
+        default=ServiceType.MOVING,
+    )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.CREATED)
     scheduled_start = models.DateTimeField(null=True, blank=True)
     scheduled_end = models.DateTimeField(null=True, blank=True)
     pickup_address = models.CharField(max_length=255)
     pickup_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     pickup_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    pickup_floor = models.PositiveSmallIntegerField(default=0)
+    pickup_has_elevator = models.BooleanField(default=False)
     dropoff_address = models.CharField(max_length=255, blank=True)
     dropoff_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     dropoff_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    dropoff_floor = models.PositiveSmallIntegerField(default=0)
+    dropoff_has_elevator = models.BooleanField(default=False)
     special_instructions = models.TextField(blank=True)
+    service_notes = models.TextField(blank=True)
     estimated_distance_km = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     estimated_duration_minutes = models.PositiveIntegerField(null=True, blank=True)
     estimated_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)

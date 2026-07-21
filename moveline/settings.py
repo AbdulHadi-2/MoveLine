@@ -6,7 +6,23 @@ import os
 from pathlib import Path
 from datetime import timedelta
 
+from corsheaders.defaults import default_headers
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def load_env_file(path):
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_env_file(BASE_DIR / ".env")
 
 # -------------------------------------------------------------
 # SECURITY
@@ -37,10 +53,11 @@ INSTALLED_APPS = [
 
     # Local apps
     'users',
-    'orders',
+    'orders.apps.OrdersConfig',
     'vehicles',
     'payments',
     'tracking',
+    'chat.apps.ChatConfig',
     'ai_analyze',
     'ratings',
     # 'notifications',  # optional
@@ -84,6 +101,24 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'moveline.wsgi.application'
 ASGI_APPLICATION = 'moveline.asgi.application'  
+
+# -------------------------------------------------------------
+# REDIS / CELERY
+# -------------------------------------------------------------
+REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE if "TIME_ZONE" in globals() else "Asia/Damascus"
+CELERY_BEAT_SCHEDULE = {
+    "check-stopped-trucks-every-minute": {
+        "task": "tracking.tasks.check_stopped_trucks",
+        "schedule": 60.0,
+    },
+}
  
 # DATABASES = {
 #     'default': {
@@ -122,6 +157,7 @@ DATABASES = {
             'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
+
 
 # }
 
@@ -183,6 +219,31 @@ EMAIL_HOST_PASSWORD = "bgjb zagh ayiy mvjc"
 DEFAULT_FROM_EMAIL = "MoveLine <hadi.tiger.2003h@gmail.com>"
 
 # -------------------------------------------------------------
+# FIREBASE (FCM)
+# -------------------------------------------------------------
+# Path to Firebase service account JSON
+FIREBASE_CREDENTIALS_PATH = os.getenv(
+    "FIREBASE_CREDENTIALS_PATH",
+    str(BASE_DIR / "firebase-service-account.json"),
+)
+
+# -------------------------------------------------------------
+# PAYMERA PAYMENT GATEWAY
+# -------------------------------------------------------------
+PAYMERA_BASE_URL = os.getenv("PAYMERA_BASE_URL", "")
+PAYMERA_INITIATE_PATH = os.getenv("PAYMERA_INITIATE_PATH", "payment/initiate")
+PAYMERA_MERCHANT_ID = os.getenv("PAYMERA_MERCHANT_ID", "")
+PAYMERA_API_KEY = os.getenv("PAYMERA_API_KEY", "")
+PAYMERA_WEBHOOK_SECRET = os.getenv("PAYMERA_WEBHOOK_SECRET", "")
+
+# -------------------------------------------------------------
+# STRIPE PAYMENT GATEWAY
+# -------------------------------------------------------------
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_CURRENCY = os.getenv("STRIPE_CURRENCY", "usd")
+
+# -------------------------------------------------------------
 # REST FRAMEWORK
 # -------------------------------------------------------------
 REST_FRAMEWORK = {
@@ -218,6 +279,12 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8080",
     "http://localhost:4200",  # Angular
 ]
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "ngrok-skip-browser-warning",
+]
+CSRF_TRUSTED_ORIGINS = [
+    "https://trispermous-hamfistedly-douglas.ngrok-free.dev",
+]
 
 # -------------------------------------------------------------
 # DEFAULTS
@@ -233,8 +300,24 @@ AUTH_USER_MODEL = 'users.User'
 # -------------------------------------------------------------
 # CHANNELS
 # -------------------------------------------------------------
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer",
+CHANNEL_LAYER_BACKEND = os.getenv("CHANNEL_LAYER_BACKEND", "redis").lower()
+
+if CHANNEL_LAYER_BACKEND == "memory":
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        }
     }
-}
+else:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [REDIS_URL],
+            },
+        }
+    }
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://trispermous-hamfistedly-douglas.ngrok-free.dev",
+]

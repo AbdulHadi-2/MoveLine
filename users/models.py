@@ -81,6 +81,7 @@ class DriverProfile(TimeStampedModel):
     license_number = models.CharField(max_length=100, blank=True)
     rating = models.FloatField(default=0.0)
     availability = models.BooleanField(default=True)
+    suspended_until = models.DateTimeField(null=True, blank=True)
     current_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     current_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     location_updated_at = models.DateTimeField(null=True, blank=True)
@@ -103,7 +104,9 @@ class WorkerProfile(TimeStampedModel):
         related_name="workers",
     )
     skills = models.TextField(blank=True)
+    rating = models.FloatField(default=0.0)
     availability = models.BooleanField(default=True)
+    suspended_until = models.DateTimeField(null=True, blank=True)
     current_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     current_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     location_updated_at = models.DateTimeField(null=True, blank=True)
@@ -124,6 +127,67 @@ class PasswordResetCode(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - human readable string
         return f"PasswordResetCode<{self.user_id}>"
+
+
+class EmailVerificationCode(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="email_verification_codes")
+    code = models.CharField(max_length=4)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self) -> str:  # pragma: no cover - human readable string
+        return f"EmailVerificationCode<{self.user_id}>"
+
+
+class DeviceToken(models.Model):
+    class DeviceType(models.TextChoices):
+        ANDROID = "android", "Android"
+        IOS = "ios", "iOS"
+        WEB = "web", "Web"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="device_tokens",
+    )
+    token = models.CharField(max_length=512, unique=True)
+    device_type = models.CharField(
+        max_length=20,
+        choices=DeviceType.choices,
+        default=DeviceType.ANDROID,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self) -> str:  # pragma: no cover - human readable string
+        return f"DeviceToken<{self.user_id}>"
+
+
+class UserNotification(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    title = models.CharField(max_length=160)
+    body = models.TextField(blank=True)
+    data = models.JSONField(default=dict, blank=True)
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self) -> str:  # pragma: no cover - human readable string
+        return f"UserNotification<{self.user_id}: {self.title}>"
 
 
 class ApplicantStatus(models.TextChoices):

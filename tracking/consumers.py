@@ -10,6 +10,9 @@ from .models import Tracking
 from orders.models import Order
 
 
+STOP_SPEED_KMH = 3.0
+
+
 class TrackingConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.order_id = self.scope["url_route"]["kwargs"]["order_id"]
@@ -93,13 +96,20 @@ class TrackingConsumer(AsyncWebsocketConsumer):
             for key, value in fields.items():
                 setattr(tracking, key, value)
             tracking.last_ping_at = timezone.now()
-            tracking.save(update_fields=(*fields.keys(), "last_ping_at"))
+            update_fields = [*fields.keys(), "last_ping_at"]
+            self._update_stop_state(tracking, update_fields)
 
             order = tracking.order
             if self._is_at_dropoff(order, tracking):
                 if order.status != Order.Status.DELIVERED:
                     order.status = Order.Status.DELIVERED
                     order.save(update_fields=("status",))
+                if tracking.stopped_since is not None:
+                    tracking.stopped_since = None
+                    tracking.save(update_fields=("stopped_since",))
+                    self._resolve_open_stop_alerts(tracking)
+
+            tracking.save(update_fields=update_fields)
 
         return {
             "order": tracking.order_id,
@@ -111,6 +121,32 @@ class TrackingConsumer(AsyncWebsocketConsumer):
             "last_ping_at": tracking.last_ping_at.isoformat() if tracking.last_ping_at else None,
             "is_active": tracking.is_active,
         }
+
+    def _update_stop_state(self, tracking, update_fields):
+        if tracking.speed_kmh is None:
+            return
+        try:
+            speed = float(tracking.speed_kmh)
+        except (TypeError, ValueError):
+            return
+
+        if speed < STOP_SPEED_KMH:
+            if tracking.stopped_since is None:
+                tracking.stopped_since = timezone.now()
+                update_fields.append("stopped_since")
+        else:
+            tracking.last_movement_at = timezone.now()
+            update_fields.append("last_movement_at")
+            if tracking.stopped_since is not None:
+                tracking.stopped_since = None
+                update_fields.append("stopped_since")
+                self._resolve_open_stop_alerts(tracking)
+
+    def _resolve_open_stop_alerts(self, tracking):
+        tracking.alerts.filter(
+            alert_type="unexpected_stop",
+            status__in=["open", "acknowledged"],
+        ).update(status="resolved", resolved_at=timezone.now())
 
     def _is_at_dropoff(self, order, tracking) -> bool:
         if (

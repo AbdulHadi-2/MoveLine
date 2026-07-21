@@ -2,7 +2,10 @@ from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core import signing
 from django.core.mail import EmailMultiAlternatives
+from django.db import models
+from django.utils import timezone
 from rest_framework import permissions, response, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView
 
@@ -12,22 +15,32 @@ from .models import (
     InterviewStatus,
     WorkerApplication,
     CustomerProfile,
+    DeviceToken,
     DriverProfile,
     Office,
+    UserNotification,
     WorkerProfile,
 )
 from .serializers import (
     CustomerProfileSerializer,
+    DeviceTokenSerializer,
+    DriverOfficeAssignSerializer,
     DriverApplicantRegistrationSerializer,
     DriverApplicationSerializer,
     DriverProfileSerializer,
+    EmailVerificationResendSerializer,
+    EmailVerificationVerifySerializer,
     InterviewScheduleSerializer,
     OfficeSerializer,
+    TestPushNotificationSerializer,
+    UserNotificationSerializer,
     UserSerializer,
     WorkerApplicantRegistrationSerializer,
     WorkerApplicationSerializer,
     WorkerProfileSerializer,
 )
+from .email_verification import build_email_verification_payload
+from .notifications import send_push_to_user
 from .password_reset import (
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
@@ -40,6 +53,37 @@ from .password_reset import (
 User = get_user_model()
 
 
+def send_email_verification_email(user, code):
+    subject = "Verify your MoveLine email"
+    message = (
+        "Hello,"
+        "Welcome to MoveLine."
+        "Use this 4-digit code to verify your email:"
+        f"{code}"
+        "This code expires in 10 minutes."
+        "MoveLine Support"
+    )
+    html_message = f"""
+<div style="font-family: Arial, sans-serif; background:#f5f7fb; padding: 24px;">
+  <div style="max-width: 520px; margin: 0 auto; background: #ffffff; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+    <h2 style="margin: 0 0 8px; color:#111827;">Verify your MoveLine email</h2>
+    <p style="margin: 0 0 16px; color:#374151;">Welcome to MoveLine. Use this code to activate your account.</p>
+    <div style="background:#f3f4f6; padding: 16px; border-radius: 10px; text-align:center; margin-bottom: 16px;">
+      <div style="font-size: 12px; letter-spacing: 2px; color:#6b7280; text-transform: uppercase;">Verification Code</div>
+      <div style="font-size: 28px; font-weight: 700; color:#111827; letter-spacing: 6px;">{code}</div>
+    </div>
+    <p style="margin: 0 0 8px; color:#374151;">This code expires in <strong>10 minutes</strong>.</p>
+    <p style="margin: 0; color:#6b7280;">If you did not create a MoveLine account, you can ignore this email.</p>
+    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;" />
+    <p style="margin: 0; color:#9ca3af; font-size: 12px;">MoveLine Support</p>
+  </div>
+</div>
+"""
+    email = EmailMultiAlternatives(subject, message, settings.DEFAULT_FROM_EMAIL, [user.email])
+    email.attach_alternative(html_message, "text/html")
+    email.send()
+
+
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.select_related(
         "customer_profile", "driver_profile", "worker_profile"
@@ -50,6 +94,52 @@ class UserViewSet(viewsets.ModelViewSet):
         if self.action == "create" or self.request.method == "POST":
             return [permissions.AllowAny()]
         return super().get_permissions()
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        payload = build_email_verification_payload(user)
+        send_email_verification_email(user, payload["code"])
+        return response.Response(
+            {
+                "detail": "Account created. Verification code sent to email.",
+                "verification_status": "pending",
+                "user": self.get_serializer(user).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class EmailVerificationVerifyView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = EmailVerificationVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        return response.Response(
+            {
+                "detail": "Email verified. Account activated.",
+                "user": UserSerializer(user).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class EmailVerificationResendView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = EmailVerificationResendSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.user
+        payload = build_email_verification_payload(user)
+        send_email_verification_email(user, payload["code"])
+        return response.Response(
+            {"detail": "Verification code sent."},
+            status=status.HTTP_200_OK,
+        )
 
 
 class CustomerProfileViewSet(viewsets.ModelViewSet):
@@ -77,6 +167,36 @@ class DriverProfileViewSet(viewsets.ModelViewSet):
             return self.queryset.none()
         return self.queryset.filter(user=user)
 
+    @action(detail=True, methods=["post"], url_path="assign-office")
+    def assign_office(self, request, pk=None):
+        if not (request.user.is_staff or request.user.is_superuser):
+            return response.Response(
+                {"detail": "Only admins can assign drivers to offices."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        driver_profile = (
+            DriverProfile.objects.select_related("user")
+            .filter(models.Q(pk=pk) | models.Q(user_id=pk))
+            .first()
+        )
+        if driver_profile is None:
+            return response.Response(
+                {"detail": "Driver profile not found for this profile id or user id."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        serializer = DriverOfficeAssignSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        driver_profile.office = serializer.validated_data["office"]
+        driver_profile.save(update_fields=("office", "updated_at"))
+        return response.Response(
+            {
+                "detail": "Driver assigned to office.",
+                "driver": DriverProfileSerializer(driver_profile).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class WorkerProfileViewSet(viewsets.ModelViewSet):
     queryset = WorkerProfile.objects.select_related("user").all()
@@ -90,10 +210,121 @@ class WorkerProfileViewSet(viewsets.ModelViewSet):
             return self.queryset.none()
         return self.queryset.filter(user=user)
 
+    @action(detail=True, methods=["post"], url_path="assign-office")
+    def assign_office(self, request, pk=None):
+        if not (request.user.is_staff or request.user.is_superuser):
+            return response.Response(
+                {"detail": "Only admins can assign workers to offices."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        worker_profile = (
+            WorkerProfile.objects.select_related("user")
+            .filter(models.Q(pk=pk) | models.Q(user_id=pk))
+            .first()
+        )
+        if worker_profile is None:
+            return response.Response(
+                {"detail": "Worker profile not found for this profile id or user id."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        serializer = DriverOfficeAssignSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        worker_profile.office = serializer.validated_data["office"]
+        worker_profile.save(update_fields=("office", "updated_at"))
+        return response.Response(
+            {
+                "detail": "Worker assigned to office.",
+                "worker": WorkerProfileSerializer(worker_profile).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class OfficeViewSet(viewsets.ModelViewSet):
     queryset = Office.objects.all()
     serializer_class = OfficeSerializer
+
+
+class DeviceTokenRegisterView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = DeviceTokenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        token = serializer.validated_data["token"]
+        device_type = serializer.validated_data.get("device_type")
+        obj, created = request.user.device_tokens.update_or_create(
+            token=token,
+            defaults={"device_type": device_type or "android"},
+        )
+        data = DeviceTokenSerializer(obj).data
+        return response.Response(
+            {"detail": "Device token saved.", "device": data},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class TestPushNotificationView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = TestPushNotificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        sent_count = send_push_to_user(
+            request.user,
+            title=serializer.validated_data["title"],
+            body=serializer.validated_data["body"],
+            data=serializer.validated_data.get("data", {}),
+        )
+        device_count = DeviceToken.objects.filter(user=request.user).count()
+        return response.Response(
+            {
+                "detail": "Push notification requested.",
+                "user_id": request.user.id,
+                "registered_device_count": device_count,
+                "sent_count": sent_count,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class UserNotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = UserNotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = UserNotification.objects.filter(user=self.request.user)
+        is_read = self.request.query_params.get("is_read")
+        if is_read in {"true", "True", "1"}:
+            queryset = queryset.filter(is_read=True)
+        elif is_read in {"false", "False", "0"}:
+            queryset = queryset.filter(is_read=False)
+        return queryset
+
+    @action(detail=True, methods=["post"], url_path="mark-read")
+    def mark_read(self, request, pk=None):
+        notification = self.get_object()
+        if not notification.is_read:
+            notification.is_read = True
+            notification.read_at = timezone.now()
+            notification.save(update_fields=("is_read", "read_at"))
+        return response.Response(
+            UserNotificationSerializer(notification).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=["post"], url_path="mark-all-read")
+    def mark_all_read(self, request):
+        now = timezone.now()
+        updated_count = self.get_queryset().filter(is_read=False).update(
+            is_read=True,
+            read_at=now,
+        )
+        return response.Response(
+            {"detail": "Notifications marked as read.", "updated_count": updated_count},
+            status=status.HTTP_200_OK,
+        )
 
 
 class ApplicantRegisterBaseView(APIView):

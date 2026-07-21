@@ -52,6 +52,15 @@ VEHICLE_CAPACITY_M3 = {
     "large": 9999.0,
 }
 
+HEAVY_ITEMS = {
+    "Sofa",
+    "Bed",
+    "Wardrobe",
+    "Refrigerator",
+    "Washing Machine",
+    "Oven",
+}
+
 POST_FILTER_MAP = {
     "couch": "Sofa",
     "Couch": "Sofa",
@@ -161,22 +170,55 @@ def recommend_vehicle_type(total_volume_m3):
     return "large"
 
 
+def recommend_workers_count(items, total_volume_m3):
+    # Base recommendation by volume.
+    if total_volume_m3 <= 4:
+        workers = 1
+    elif total_volume_m3 <= 10:
+        workers = 2
+    elif total_volume_m3 <= 18:
+        workers = 3
+    else:
+        workers = 4
+
+    heavy_quantity = 0
+    for item in items or []:
+        label = item.get("label")
+        if label in HEAVY_ITEMS:
+            qty = item.get("quantity", 1)
+            try:
+                qty = int(qty)
+            except Exception:
+                qty = 1
+            if qty < 1:
+                qty = 1
+            heavy_quantity += qty
+
+    # Ensure at least 2 workers when heavy items exist.
+    if heavy_quantity > 0 and workers < 2:
+        workers = 2
+    # Add one more worker for many heavy pieces.
+    if heavy_quantity >= 4:
+        workers += 1
+
+    return min(workers, 6)
+
+
 class HybridMoveLineDetector:
     def __init__(self):
         # self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.yolo = YOLO(YOLO_WEIGHTS)
 
-    # @torch.no_grad()
-    # def _detect_with_yolo(self, image_path: str):
-    #     results = self.yolo(image_path, conf=YOLO_CONF, verbose=False)
-    #     r = results[0]
-    #     names = r.names
+    def _detect_with_yolo(self, image_path: str):
+        results = self.yolo(image_path, conf=YOLO_CONF, verbose=False)
+        r = results[0]
+        names = r.names
 
-    #     labels = []
-    #     if r.boxes is not None and r.boxes.cls is not None:
-    #         for c in r.boxes.cls.tolist():
-    #             labels.append(names[int(c)])
-    #     return Counter(labels)
+        labels = []
+        if r.boxes is not None and r.boxes.cls is not None:
+            for c in r.boxes.cls.tolist():
+                labels.append(names[int(c)])
+        return Counter(labels)
 
     def predict(self, image_path: str):
         yolo_counts = self._detect_with_yolo(image_path)
@@ -222,4 +264,5 @@ def analyze_image(pil_image: Image.Image) -> dict:
         "items": items,
         "estimated_total_volume_m3": round(total_volume, 2),
         "recommended_vehicle_type": recommend_vehicle_type(total_volume),
+        "recommended_workers_count": recommend_workers_count(items, total_volume),
     }

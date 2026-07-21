@@ -15,6 +15,19 @@ staticfiles/
 venv/
 .env
 
+# Secrets
+firebase-service-account.json
+firebase-service-account-*.json
+*-firebase-adminsdk-*.json
+
+# Local tooling / generated runtime files
+.chrome_pdf_profile/
+.edge_pdf_profile/
+.tmp_ppt_extract/
+celerybeat-schedule*
+deploy/nginx/logs/
+deploy/nginx/temp/
+
 # VSCode
 .vscode/
 

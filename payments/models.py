@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 
@@ -6,6 +7,8 @@ class Payment(models.Model):
         CARD = "card", "Card"
         CASH = "cash", "Cash"
         PARTIAL = "partial", "Partial"
+        PAYMERA = "paymera", "Paymera"
+        STRIPE = "stripe", "Stripe"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -35,3 +38,60 @@ class Payment(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - human readable string
         return f"Payment(order={self.order_id}, status={self.get_status_display()})"
+
+
+class PendingOrderCheckout(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PAID = "paid", "Paid"
+        CREATED = "created", "Created"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    customer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="pending_order_checkouts",
+    )
+    order = models.OneToOneField(
+        "orders.Order",
+        on_delete=models.SET_NULL,
+        related_name="pending_checkout",
+        null=True,
+        blank=True,
+    )
+    order_payload = models.JSONField(default=dict)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=10, default="USD")
+    reserved_driver = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="pending_driver_checkouts",
+        null=True,
+        blank=True,
+    )
+    reserved_vehicle = models.ForeignKey(
+        "vehicles.Vehicle",
+        on_delete=models.SET_NULL,
+        related_name="pending_checkouts",
+        null=True,
+        blank=True,
+    )
+    reserved_workers = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        related_name="pending_worker_checkouts",
+        blank=True,
+    )
+    stripe_session_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self) -> str:  # pragma: no cover - human readable string
+        return f"PendingOrderCheckout(customer={self.customer_id}, status={self.get_status_display()})"

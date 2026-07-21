@@ -46,11 +46,37 @@ class TrackingInlineSerializer(serializers.ModelSerializer):
         )
 
 
+class RatingInlineSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    rated_user = serializers.IntegerField(source="rated_user_id", read_only=True)
+    rated_user_full_name = serializers.CharField(source="rated_user.get_full_name", read_only=True)
+    target_role = serializers.CharField(read_only=True)
+    score = serializers.IntegerField(read_only=True)
+    feedback = serializers.CharField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+
+
+class OrderStatusNotificationSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=Order.Status.choices)
+
+
+class OrderAssignmentNotificationSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(
+        choices=(
+            ("driver", "Driver"),
+            ("worker", "Worker"),
+            ("all", "All"),
+        ),
+        default="all",
+    )
+
+
 class OrderSerializer(serializers.ModelSerializer):
     order_workers = OrderWorkerSerializer(many=True, read_only=True)
     items = OrderItemSerializer(many=True, required=False)
     payment = PaymentInlineSerializer(read_only=True)
     tracking = TrackingInlineSerializer(read_only=True)
+    ratings = RatingInlineSerializer(many=True, read_only=True)
 
     class Meta:
         model = Order
@@ -71,10 +97,15 @@ class OrderSerializer(serializers.ModelSerializer):
             "pickup_address",
             "pickup_latitude",
             "pickup_longitude",
+            "pickup_floor",
+            "pickup_has_elevator",
             "dropoff_address",
             "dropoff_latitude",
             "dropoff_longitude",
+            "dropoff_floor",
+            "dropoff_has_elevator",
             "special_instructions",
+            "service_notes",
             "estimated_distance_km",
             "estimated_duration_minutes",
             "estimated_price",
@@ -84,6 +115,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "items",
             "payment",
             "tracking",
+            "ratings",
             "created_at",
             "updated_at",
         )

@@ -9,6 +9,7 @@ from .fastvlm_service import (
     analyze_image,
     estimate_total_volume_m3,
     recommend_vehicle_type,
+    recommend_workers_count,
 )
 
 
@@ -71,6 +72,7 @@ class AnalyzeImageView(APIView):
             "items": merged_items,
             "estimated_total_volume_m3": round(total_volume, 2),
             "recommended_vehicle_type": recommend_vehicle_type(total_volume),
+            "recommended_workers_count": recommend_workers_count(merged_items, total_volume),
             "image_count": len(images),
         }
         return response.Response(payload, status=status.HTTP_200_OK)
